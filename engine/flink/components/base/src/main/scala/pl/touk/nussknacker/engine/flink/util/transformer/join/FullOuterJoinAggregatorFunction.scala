@@ -26,17 +26,26 @@ class FullOuterJoinAggregatorFunction[MapT[K,V]](protected val aggregator: Aggre
 
   type FlinkCtx = CoProcessFunction[ValueWithContext[StringKeyedValue[AnyRef]], ValueWithContext[StringKeyedValue[AnyRef]], ValueWithContext[AnyRef]]#Context
 
-  def processElement(in: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]) : Unit = {
+  def processElement(in: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]) : AnyRef = {
     addElementToState(in, ctx.timestamp(), ctx.timerService(), out)
     val current: MapT[Long, aggregator.Aggregate] = readStateOrInitial()
-    val finalVal = computeFinalValue(current, ctx.timestamp())
-    out.collect(ValueWithContext(finalVal, in.context))
+    computeFinalValue(current, ctx.timestamp())
   }
 
-  override def processElement1(in1: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]): Unit =
-    processElement(in1, ctx, out)
+  override def processElement1(in1: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]): Unit = {
+    val v = processElement(in1, ctx, out) match {
+      case (_, x) => x
+      case _ => assert(false)
+    }
+    out.collect(ValueWithContext(v.asInstanceOf[AnyRef], in1.context))
+  }
 
-  override def processElement2(in2: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]): Unit =
-    processElement(in2, ctx, out)
+  override def processElement2(in2: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]): Unit = {
+    val v = processElement(in2, ctx, out) match {
+      case (x, _) => x.asInstanceOf[AnyRef]
+      case _ => assert(false)
+    }
+    out.collect(ValueWithContext(v.asInstanceOf[AnyRef], in2.context))
+  }
 
 }

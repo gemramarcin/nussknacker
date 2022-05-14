@@ -82,25 +82,26 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
     val key = "fooKey"
     val input1 = BlockingQueueSource.create[OneRecord](_.timestamp, Duration.ofHours(1))
     val input2 = List(
-      OneRecord(key, 1, 123)
+      OneRecord(key, 1, 2),
+      OneRecord(key, 1, 22),
+      OneRecord(key, 1, 222),
+      OneRecord(key, 1, 2222)
     )
 
     val collectingListener = ResultsCollectingListenerHolder.registerRun(identity)
     val (id, stoppableEnv) = runProcess(process, input1, input2, collectingListener)
 
-    input1.add(OneRecord(key, 1, -1))
-    // We can't be sure that main records will be consumed after matching joined records so we need to wait for them.
-    eventually {
-      FullOuterJoinTransformerSpec.elementsAddedToState should have size input2.size
-    }
-    input1.add(OneRecord(key, 1, -1))
+    input1.add(OneRecord(key, 1, 1))
+    input1.add(OneRecord(key, 1, 11))
+    input1.add(OneRecord(key, 1, 111))
+    input1.add(OneRecord(key, 1, 1111))
     input1.finish()
 
     stoppableEnv.waitForJobState(id.getJobID, process.id, ExecutionState.FINISHED)()
 
     val outValues = collectingListener.results[Any].nodeResults(EndNodeId)
       //.filter(_.variableTyped(KeyVariableName).contains(key))
-      .map(_.variableTyped[(AnyRef, AnyRef)](OutVariableName).get)
+      .map(_.variableTyped[java.util.Map[String, AnyRef]](OutVariableName).get.asScala)
 
     outValues.map(println(_))
 
