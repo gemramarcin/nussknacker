@@ -3,7 +3,7 @@ package pl.touk.nussknacker.engine.flink.util.transformer.aggregate
 import org.scalatest.prop.TableDrivenPropertyChecks
 import org.scalatest.{FunSuite, Matchers}
 import pl.touk.nussknacker.engine.api.typed.typing.{Typed, TypedClass, TypedObjectTypingResult, TypingResult, Unknown}
-import pl.touk.nussknacker.engine.flink.util.transformer.aggregate.aggregates.{FirstAggregator, LastAggregator, ListAggregator, MapAggregator, MaxAggregator, MinAggregator, SetAggregator, SumAggregator}
+import pl.touk.nussknacker.engine.flink.util.transformer.aggregate.aggregates.{EitherAggregator, FirstAggregator, LastAggregator, ListAggregator, MapAggregator, MaxAggregator, MinAggregator, SetAggregator, SumAggregator}
 import java.lang.{Integer => JInt, Long => JLong}
 import java.util.{List => JList, Map => JMap, Set => JSet}
 
@@ -67,6 +67,19 @@ class AggregatesSpec extends FunSuite with TableDrivenPropertyChecks with Matche
     val stored = TypedObjectTypingResult(namedAggregators.mapValues(_._4).toList, objType = Typed.typedClass(classOf[Map[_, _]], List(Typed[String], Unknown)))
     val output = TypedObjectTypingResult(namedAggregators.mapValues(_._5).toList, objType = Typed.typedClass(classOf[JMap[_, _]], List(Typed[String], Unknown)))
     checkAggregator(mapAggregator, input, el, stored, output)
+  }
+
+  test("should compute output and store type for either aggregate") {
+    val aggregatorLeft = ListAggregator
+    val aggregatorRight = SumAggregator
+
+    val eitherAggregator = new EitherAggregator(aggregatorLeft, aggregatorRight)
+    val input = Typed.fromDetailedType[Either[Double, Int]]
+    val elem = Right(1)
+    val stored = Typed.fromDetailedType[(JList[Double], Long)]
+    val output = stored
+
+    checkAggregator(eitherAggregator, input, elem, stored, output)
   }
 
   test("MapAggregator manages field add/removal") {
@@ -143,12 +156,70 @@ class AggregatesSpec extends FunSuite with TableDrivenPropertyChecks with Matche
     aggregator.isNeutralForAccumulator(Map[String, AnyRef]("sumField" -> (0: java.lang.Integer), "maxField" -> (124: java.lang.Integer)).asJava, oldState) shouldBe false
   }
 
+  test("Neutral elements for accumulator should be detected for either") {
+    val aggregatorLeft = ListAggregator
+    val aggregatorRight = SumAggregator
+
+    val aggregator = new EitherAggregator(aggregatorLeft, aggregatorRight)
+
+    val oldState = (List(7, 8, 9), 48)
+
+    aggregator.isNeutralForAccumulator(Left(8).asInstanceOf[aggregator.Element], oldState.asInstanceOf[aggregator.Aggregate]) shouldBe false
+    aggregator.isNeutralForAccumulator(Right(0).asInstanceOf[aggregator.Element], oldState.asInstanceOf[aggregator.Aggregate]) shouldBe true
+    aggregator.isNeutralForAccumulator(Right(8).asInstanceOf[aggregator.Element], oldState.asInstanceOf[aggregator.Aggregate]) shouldBe false
+  }
+
   test("Neutral elements for accumulator should be detected for cardinality") {
     val aggregator = HyperLogLogPlusAggregator()
     val oldState = List("1", "2", "3").foldLeft(aggregator.zero)((agg, el) => aggregator.addElement(el, agg))
 
     aggregator.isNeutralForAccumulator("1", oldState) shouldBe true
     aggregator.isNeutralForAccumulator("4", oldState) shouldBe false
+  }
+
+  private def checkZero(aggregator: Aggregator, input: TypingResult, el: Any, stored: TypingResult, output: TypingResult): Unit = {
+    val elem = el.asInstanceOf[aggregator.Element]
+    val elemAggregator = aggregator.addElement(elem, aggregator.zero)
+
+    // There is no generic way of checking if val.add(0) == val
+    // or 0.add(val) == 0.
+
+    aggregator.mergeAggregates(elemAggregator, aggregator.zero) shouldBe elemAggregator
+    aggregator.mergeAggregates(aggregator.zero, elemAggregator) shouldBe elemAggregator
+  }
+
+  test("Zeros should be neutral for simple aggregators") {
+    forAll(aggregators)(checkZero)
+  }
+
+  test("Zeros should be neutral for map aggregator") {
+    val aggregator = new MapAggregator(Map[String, Aggregator]("sumField" -> SumAggregator, "maxField" -> MaxAggregator).asJava)
+
+    val state = Map[String, AnyRef]("sumField" -> (5: java.lang.Integer), "maxField" -> (123: java.lang.Integer))
+
+    aggregator.mergeAggregates(aggregator.zero, state) shouldBe state
+    aggregator.mergeAggregates(state, aggregator.zero) shouldBe state
+  }
+
+  test("Zeros should be neutral for either aggregator"){
+    val aggregatorLeft = ListAggregator
+    val aggregatorRight = SumAggregator
+
+    val aggregator = new EitherAggregator(aggregatorLeft, aggregatorRight)
+    val state = (List(7, 8, 9), 48).asInstanceOf[aggregator.Aggregate]
+
+    aggregator.mergeAggregates(aggregator.zero, state) shouldBe state
+    aggregator.mergeAggregates(state, aggregator.zero) shouldBe state
+
+
+    val leftElem = Left(15).asInstanceOf[aggregator.Element]
+    val leftElemState = aggregator.addElement(leftElem, aggregator.zero)
+    val rightElem = Right(11).asInstanceOf[aggregator.Element]
+    val rightElemState = aggregator.addElement(rightElem, aggregator.zero)
+    val combinedState = aggregator.addElement(rightElem, leftElemState)
+
+    aggregator.mergeAggregates(leftElemState, rightElemState) shouldBe combinedState
+    aggregator.mergeAggregates(rightElemState, leftElemState) shouldBe combinedState
   }
 
   class JustAnyClass

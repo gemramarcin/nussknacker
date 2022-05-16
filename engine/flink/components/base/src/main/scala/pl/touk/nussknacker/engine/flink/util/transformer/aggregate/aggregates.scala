@@ -263,6 +263,7 @@ object aggregates {
       (aggLeft.result(finalAggregate._1), aggRight.result(finalAggregate._2))
 
     override def computeOutputType(input: typing.TypingResult): Validated[String, typing.TypingResult] = input match {
+      // TODO: Accept only Option
       case TypedClass(x, leftInput :: rightInput :: Nil) => {
         val leftOutputType = aggLeft.computeOutputType(leftInput)
         val rightOutputType = aggRight.computeOutputType(rightInput)
