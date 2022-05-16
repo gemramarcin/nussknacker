@@ -30,29 +30,22 @@ class FullOuterJoinAggregatorFunction[MapT[K,V]](protected val aggregator: Aggre
     addElementToState(in, ctx.timestamp(), ctx.timerService(), out)
     val current: MapT[Long, aggregator.Aggregate] = readStateOrInitial()
     val res = computeFinalValue(current, ctx.timestamp())
-    println(s"processElement  - result: $res")
     res
   }
 
   override def processElement1(in1: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]): Unit = {
-    println(s"processElement1 - input: ${in1.value.value}")
     val v = processElement(in1, ctx, out) match {
       case (_, x) => x
       case _ => assert(false)
     }
-    println(s"processElement1 - result: $v")
-    println("")
     out.collect(ValueWithContext(v.asInstanceOf[AnyRef], in1.context))
   }
 
   override def processElement2(in2: ValueWithContext[StringKeyedValue[AnyRef]], ctx: FlinkCtx, out: Collector[ValueWithContext[AnyRef]]): Unit = {
-    println(s"processElement2 - input: ${in2.value.value}")
     val v = processElement(in2, ctx, out) match {
       case (x, _) => x.asInstanceOf[AnyRef]
       case _ => assert(false)
     }
-    println(s"processElement2 - result: $v")
-    println("")
     out.collect(ValueWithContext(v.asInstanceOf[AnyRef], in2.context))
   }
 

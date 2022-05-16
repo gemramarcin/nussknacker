@@ -31,7 +31,7 @@ import pl.touk.nussknacker.engine.testmode.{ResultsCollectingListener, ResultsCo
 import pl.touk.nussknacker.test.VeryPatientScalaFutures
 
 import java.time.Duration
-import java.util.Collections.{emptyList, singletonList}
+import scala.collection.JavaConverters._
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters.mapAsScalaMapConverter
@@ -53,7 +53,7 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
 
   private val OutVariableName = "outVar"
 
-  test("join aggregate into main stream") {
+  private def performTest(input: List[Either[OneRecord, OneRecord]], expected: List[Map[String, AnyRef]]): Unit = {
     val process =  EspProcess(MetaData("sample-join-last", StreamMetaData()), NonEmptyList.of[SourceNode](
       GraphBuilder.source("source", "start-main")
         .buildSimpleVariable("build-key", KeyVariableName, "#input.key")
@@ -73,7 +73,7 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
             )
           ),
           "aggregator" -> s"#AGG.map({last: #AGG.last, list: #AGG.list, approxCardinality: #AGG.approxCardinality, sum: #AGG.sum})",
-          "windowLength" -> s"T(${classOf[Duration].getName}).parse('PT200H')",
+          "windowLength" -> s"T(${classOf[Duration].getName}).parse('PT100H')",
           "aggregateBy" -> "{last: #input.value, list: #input.value, approxCardinality: #input.value, sum: #input.value } "
         )
         .emptySink(EndNodeId, "end")
@@ -81,47 +81,38 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
 
     val key = "fooKey"
     val input1 = BlockingQueueSource.create[OneRecord](_.timestamp, Duration.ofHours(1))
-    val input2 = List(
-      OneRecord(key, 10, 10),
-      OneRecord(key, 11, 20),
-      OneRecord(key, 12, 30),
-      OneRecord(key, 13, 40),
-      OneRecord(key, 14, 50)
-    )
+    val input2 = BlockingQueueSource.create[OneRecord](_.timestamp, Duration.ofHours(1))
+
+    var addedTo1 = 0
+    var addedTo2 = 0
+
+    def addTo1(elem: OneRecord): Unit = {
+      input1.add(elem)
+      addedTo1 += 1
+      eventually {
+        FullOuterJoinTransformerSpec.elementsAddedToState1 should have size addedTo1
+      }
+    }
+
+    def addTo2(elem: OneRecord): Unit = {
+      input2.add(elem)
+      addedTo2 += 1
+      eventually {
+        FullOuterJoinTransformerSpec.elementsAddedToState2 should have size addedTo2
+      }
+    }
 
     val collectingListener = ResultsCollectingListenerHolder.registerRun(identity)
     val (id, stoppableEnv) = runProcess(process, input1, input2, collectingListener)
 
-    input1.add(OneRecord(key, 0, 1))
-    input1.add(OneRecord(key, 1, 2))
-
-    eventually {
-      FullOuterJoinTransformerSpec.elementsAddedToState should have size input2.size
-    }
-
-    input1.add(OneRecord(key, 22, 3))
-    input1.add(OneRecord(key, 23, 4))
-    input1.add(OneRecord(key, 24, 5))
+    input.map(_ match {
+      case Left(x) => addTo1(x)
+      case Right(x) => addTo2(x)
+    })
 
     input1.finish()
+    input2.finish()
 
-//    val key = "fooKey"
-//    val input1 = BlockingQueueSource.create[OneRecord](_.timestamp, Duration.ofHours(1))
-//    val input2 = List(
-//      OneRecord(key, 1, 2),
-//      OneRecord(key, 1, 22),
-//      OneRecord(key, 1, 222),
-//      OneRecord(key, 1, 2222)
-//    )
-//
-//    val collectingListener = ResultsCollectingListenerHolder.registerRun(identity)
-//    val (id, stoppableEnv) = runProcess(process, input1, input2, collectingListener)
-//
-//    input1.add(OneRecord(key, 1, 1))
-//    input1.add(OneRecord(key, 1, 11))
-//    input1.add(OneRecord(key, 1, 111))
-//    input1.add(OneRecord(key, 1, 1111))
-//    input1.finish()
 
     stoppableEnv.waitForJobState(id.getJobID, process.id, ExecutionState.FINISHED)()
 
@@ -129,16 +120,50 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
       //.filter(_.variableTyped(KeyVariableName).contains(key))
       .map(_.variableTyped[java.util.Map[String, AnyRef]](OutVariableName).get.asScala)
 
+    outValues shouldEqual expected
+  }
 
-    outValues.map(println(_))
-
-    outValues shouldEqual List(
-      Map("approxCardinality" -> 0, "last" -> null, "list" -> emptyList(), "sum" -> 0),
-      Map("approxCardinality" -> 1, "last" -> 123, "list" -> singletonList(123), "sum" -> 123)
+  test("simple join") {
+    val key = "key"
+    performTest(
+      List(
+        Left(OneRecord(key, 0, 7)),
+        Right(OneRecord(key, 1, 12)),
+        Left(OneRecord(key, 2, 51))
+      ),
+      List(
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> 7, "list" -> List(7).asJava, "approxCardinality" -> 1, "sum" -> 7),
+        Map("last" -> 12, "list" -> List(12).asJava, "approxCardinality" -> 1, "sum" -> 12)
+      ).asInstanceOf[List[Map[String, AnyRef]]]
     )
   }
 
-  private def runProcess(testProcess: EspProcess, input1: BlockingQueueSource[OneRecord], input2: List[OneRecord], collectingListener: ResultsCollectingListener) = {
+  test("many joined from the right") {
+    val key = "key"
+    performTest(
+      List(
+        Left(OneRecord(key, 0, 11)),
+        Right(OneRecord(key, 1, 1)),
+        Right(OneRecord(key, 2, 2)),
+        Right(OneRecord(key, 3, 3)),
+        Right(OneRecord(key, 4, 4)),
+        Right(OneRecord(key, 5, 5)),
+        Left(OneRecord(key, 6, 11))
+      ),
+      List(
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
+        Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
+        Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
+        Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
+        Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
+        Map("last" -> 5, "list" -> List(1, 2, 3, 4, 5).asJava, "approxCardinality" -> 5, "sum" -> 15)
+      ).asInstanceOf[List[Map[String, AnyRef]]]
+    )
+  }
+
+  private def runProcess(testProcess: EspProcess, input1: BlockingQueueSource[OneRecord], input2: BlockingQueueSource[OneRecord], collectingListener: ResultsCollectingListener) = {
     val model = modelData(input1, input2, collectingListener)
     val stoppableEnv = flinkMiniCluster.createExecutionEnvironment()
     val registrar = FlinkProcessRegistrar(new FlinkProcessCompiler(model), ExecutionConfigPreparer.unOptimizedChain(model))
@@ -147,8 +172,11 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
     (id, stoppableEnv)
   }
 
-  private def modelData(input1: BlockingQueueSource[OneRecord], input2: List[OneRecord], collectingListener: ResultsCollectingListener) =
-    LocalModelData(ConfigFactory.empty(), new FullOuterJoinTransformerSpec.Creator(input1, input2, collectingListener))
+  private def modelData(input1: BlockingQueueSource[OneRecord], input2: BlockingQueueSource[OneRecord], collectingListener: ResultsCollectingListener) = {
+    val creator = new FullOuterJoinTransformerSpec.Creator(input1, input2, collectingListener)
+    creator.resetElementsAdded()
+    LocalModelData(ConfigFactory.empty(), creator)
+  }
 
 }
 
@@ -156,9 +184,14 @@ object FullOuterJoinTransformerSpec {
 
   private val customElementName = "single-side-join-in-test"
 
-  val elementsAddedToState = new ConcurrentLinkedQueue[StringKeyedValue[AnyRef]]()
+  val elementsAddedToState1 = new ConcurrentLinkedQueue[StringKeyedValue[AnyRef]]()
+  val elementsAddedToState2 = new ConcurrentLinkedQueue[StringKeyedValue[AnyRef]]()
 
-  class Creator(mainRecordsSource: BlockingQueueSource[OneRecord], joinedRecords: List[OneRecord], collectingListener: ResultsCollectingListener) extends EmptyProcessConfigCreator {
+  class Creator (mainRecordsSource: BlockingQueueSource[OneRecord], joinedRecordsSource: BlockingQueueSource[OneRecord], collectingListener: ResultsCollectingListener) extends EmptyProcessConfigCreator {
+    def resetElementsAdded() = {
+      elementsAddedToState1.clear()
+      elementsAddedToState2.clear()
+    }
 
     override def customStreamTransformers(processObjectDependencies: ProcessObjectDependencies): Map[String, WithCategories[CustomStreamTransformer]] =
       Map(
@@ -168,8 +201,12 @@ object FullOuterJoinTransformerSpec {
                                                           (implicit nodeId: NodeId):
           CoProcessFunction[ValueWithContext[StringKeyedValue[AnyRef]], ValueWithContext[StringKeyedValue[AnyRef]], ValueWithContext[AnyRef]] = {
             new CoProcessFunctionInterceptor(super.prepareAggregatorFunction(aggregator, stateTimeout, aggregateElementType, storedTypeInfo, convertToEngineRuntimeContext)) {
+              override protected def afterProcessElement1(value: ValueWithContext[StringKeyedValue[AnyRef]]): Unit = {
+                elementsAddedToState1.add(value.value)
+              }
+
               override protected def afterProcessElement2(value: ValueWithContext[StringKeyedValue[AnyRef]]): Unit = {
-                elementsAddedToState.add(value.value)
+                elementsAddedToState2.add(value.value)
               }
             }
           }
@@ -181,8 +218,8 @@ object FullOuterJoinTransformerSpec {
     override def sourceFactories(processObjectDependencies: ProcessObjectDependencies): Map[String, WithCategories[SourceFactory]] =
       Map(
         "start-main" -> WithCategories(SourceFactory.noParam[OneRecord](mainRecordsSource)),
-        "start-joined" -> WithCategories(SourceFactory.noParam[OneRecord](
-          EmitWatermarkAfterEachElementCollectionSource.create[OneRecord](joinedRecords, _.timestamp, Duration.ofHours(1)))))
+        "start-joined" -> WithCategories(SourceFactory.noParam[OneRecord](joinedRecordsSource))
+      )
 
     override def sinkFactories(processObjectDependencies: ProcessObjectDependencies): Map[String, WithCategories[SinkFactory]] =
       Map("end" -> WithCategories(SinkFactory.noParam(EmptySink)))
