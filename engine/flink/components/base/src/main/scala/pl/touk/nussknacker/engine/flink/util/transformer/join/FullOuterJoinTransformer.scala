@@ -87,7 +87,7 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
           .map(_.map(_.mapValue(x => Right(x).asInstanceOf[AnyRef])))
 
         val sideType = aggregateBy.returnType
-        val inputType = Typed.genericTypeClass[(_, _)](List(sideType, sideType))
+        val inputType = Typed.genericTypeClass[Either[_, _]](List(sideType, sideType))
 
         val storedTypeInfo = context.typeInformationDetection.forType(aggregator.computeStoredTypeUnsafe(inputType))
         val aggregatorFunction = prepareAggregatorFunction(aggregator, FiniteDuration(window.toMillis, TimeUnit.MILLISECONDS), inputType, storedTypeInfo, context.convertToEngineRuntimeContext)(NodeId(context.nodeId))
