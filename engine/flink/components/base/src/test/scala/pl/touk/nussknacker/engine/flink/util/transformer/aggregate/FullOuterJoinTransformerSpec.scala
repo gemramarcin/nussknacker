@@ -19,7 +19,7 @@ import pl.touk.nussknacker.engine.flink.test.FlinkSpec
 import pl.touk.nussknacker.engine.flink.util.function.CoProcessFunctionInterceptor
 import pl.touk.nussknacker.engine.flink.util.keyed.StringKeyedValue
 import pl.touk.nussknacker.engine.flink.util.sink.EmptySink
-import pl.touk.nussknacker.engine.flink.util.source.{BlockingQueueSource, EmitWatermarkAfterEachElementCollectionSource}
+import pl.touk.nussknacker.engine.flink.util.source.BlockingQueueSource
 import pl.touk.nussknacker.engine.flink.util.transformer.join.{BranchType, FullOuterJoinTransformer}
 import pl.touk.nussknacker.engine.graph.EspProcess
 import pl.touk.nussknacker.engine.graph.node.SourceNode
@@ -79,7 +79,6 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
         .emptySink(EndNodeId, "end")
     ))
 
-    val key = "fooKey"
     val input1 = BlockingQueueSource.create[OneRecord](_.timestamp, Duration.ofHours(1))
     val input2 = BlockingQueueSource.create[OneRecord](_.timestamp, Duration.ofHours(1))
 
@@ -105,10 +104,10 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
     val collectingListener = ResultsCollectingListenerHolder.registerRun(identity)
     val (id, stoppableEnv) = runProcess(process, input1, input2, collectingListener)
 
-    input.map(_ match {
+    input.foreach {
       case Left(x) => addTo1(x)
       case Right(x) => addTo2(x)
-    })
+    }
 
     input1.finish()
     input2.finish()
@@ -283,7 +282,7 @@ object FullOuterJoinTransformerSpec {
   val elementsAddedToState2 = new ConcurrentLinkedQueue[StringKeyedValue[AnyRef]]()
 
   class Creator (mainRecordsSource: BlockingQueueSource[OneRecord], joinedRecordsSource: BlockingQueueSource[OneRecord], collectingListener: ResultsCollectingListener) extends EmptyProcessConfigCreator {
-    def resetElementsAdded() = {
+    def resetElementsAdded(): Unit = {
       elementsAddedToState1.clear()
       elementsAddedToState2.clear()
     }

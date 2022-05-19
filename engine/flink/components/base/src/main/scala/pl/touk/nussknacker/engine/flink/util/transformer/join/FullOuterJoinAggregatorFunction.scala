@@ -15,7 +15,7 @@ import pl.touk.nussknacker.engine.api.NodeId
 
 import scala.language.higherKinds
 
-class FullOuterJoinAggregatorFunction[MapT[K,V]](protected val aggregator: Aggregator, protected val timeWindowLengthMillis: Long,
+class FullOuterJoinAggregatorFunction[MapT[_, _]](protected val aggregator: Aggregator, protected val timeWindowLengthMillis: Long,
                                                   override val nodeId: NodeId,
                                                   protected val aggregateElementType: TypingResult,
                                                   override protected val aggregateTypeInformation: TypeInformation[AnyRef],

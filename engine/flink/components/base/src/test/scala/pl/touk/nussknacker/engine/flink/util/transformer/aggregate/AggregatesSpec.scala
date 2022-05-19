@@ -169,27 +169,17 @@ class AggregatesSpec extends FunSuite with TableDrivenPropertyChecks with Matche
     aggregator.isNeutralForAccumulator(Right(8).asInstanceOf[aggregator.Element], oldState.asInstanceOf[aggregator.Aggregate]) shouldBe false
   }
 
-  test("Neutral elements for accumulator should be detected for cardinality") {
-    val aggregator = HyperLogLogPlusAggregator()
-    val oldState = List("1", "2", "3").foldLeft(aggregator.zero)((agg, el) => aggregator.addElement(el, agg))
-
-    aggregator.isNeutralForAccumulator("1", oldState) shouldBe true
-    aggregator.isNeutralForAccumulator("4", oldState) shouldBe false
-  }
-
-  private def checkZero(aggregator: Aggregator, input: TypingResult, el: Any, stored: TypingResult, output: TypingResult): Unit = {
-    val elem = el.asInstanceOf[aggregator.Element]
-    val elemAggregator = aggregator.addElement(elem, aggregator.zero)
-
-    // There is no generic way of checking if val.add(0) == val
-    // or 0.add(val) == 0.
-
-    aggregator.mergeAggregates(elemAggregator, aggregator.zero) shouldBe elemAggregator
-    aggregator.mergeAggregates(aggregator.zero, elemAggregator) shouldBe elemAggregator
-  }
-
   test("Zeros should be neutral for simple aggregators") {
-    forAll(aggregators)(checkZero)
+    forAll(aggregators)({(aggregator, _, el, _, _) => {
+      val elem = el.asInstanceOf[aggregator.Element]
+      val elemAggregator = aggregator.addElement(elem, aggregator.zero)
+
+      // There is no generic way of checking if val.add(0) == val
+      // or 0.add(val) == 0.
+
+      aggregator.mergeAggregates(elemAggregator, aggregator.zero) shouldBe elemAggregator
+      aggregator.mergeAggregates(aggregator.zero, elemAggregator) shouldBe elemAggregator
+    }})
   }
 
   test("Zeros should be neutral for map aggregator") {
