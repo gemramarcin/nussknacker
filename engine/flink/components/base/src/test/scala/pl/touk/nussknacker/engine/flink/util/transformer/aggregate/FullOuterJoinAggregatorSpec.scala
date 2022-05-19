@@ -73,7 +73,7 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
             )
           ),
           "aggregator" -> s"#AGG.map({last: #AGG.last, list: #AGG.list, approxCardinality: #AGG.approxCardinality, sum: #AGG.sum})",
-          "windowLength" -> s"T(${classOf[Duration].getName}).parse('PT100H')",
+          "windowLength" -> s"T(${classOf[Duration].getName}).parse('PT20H')",
           "aggregateBy" -> "{last: #input.value, list: #input.value, approxCardinality: #input.value, sum: #input.value } "
         )
         .emptySink(EndNodeId, "end")
@@ -159,6 +159,101 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
         Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
         Map("last" -> 11, "list" -> List(11).asJava, "approxCardinality" -> 1, "sum" -> 11),
         Map("last" -> 5, "list" -> List(1, 2, 3, 4, 5).asJava, "approxCardinality" -> 5, "sum" -> 15)
+      ).asInstanceOf[List[Map[String, AnyRef]]]
+    )
+  }
+
+  test("many joined from the left") {
+    val key = "key"
+    performTest(
+      List(
+        Left(OneRecord(key, 0, -1)),
+        Left(OneRecord(key, 1, -2)),
+        Left(OneRecord(key, 2, -3)),
+        Right(OneRecord(key, 3, 10)),
+        Left(OneRecord(key, 4, -4)),
+        Left(OneRecord(key, 5, -5)),
+        Left(OneRecord(key, 6, -6))
+      ),
+      List(
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> -3, "list" -> List(-1, -2, -3).asJava, "approxCardinality" -> 3, "sum" -> -6),
+        Map("last" -> 10, "list" -> List(10).asJava, "approxCardinality" -> 1, "sum" -> 10),
+        Map("last" -> 10, "list" -> List(10).asJava, "approxCardinality" -> 1, "sum" -> 10),
+        Map("last" -> 10, "list" -> List(10).asJava, "approxCardinality" -> 1, "sum" -> 10)
+      ).asInstanceOf[List[Map[String, AnyRef]]]
+    )
+  }
+
+  test("many joined both sides") {
+    val key = "key"
+    performTest(
+      List(
+        Left(OneRecord(key, 0, 0)),
+        Left(OneRecord(key, 1, 1)),
+        Left(OneRecord(key, 2, 2)),
+        Right(OneRecord(key, 3, 3)),
+        Right(OneRecord(key, 4, 4)),
+        Right(OneRecord(key, 5, 5)),
+        Left(OneRecord(key, 6, 6)),
+        Left(OneRecord(key, 7, 7)),
+        Left(OneRecord(key, 8, 8)),
+        Right(OneRecord(key, 9, 9)),
+        Right(OneRecord(key, 10, 10)),
+        Right(OneRecord(key, 11, 11))
+      ),
+      List(
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> 2, "list" -> List(0, 1, 2).asJava, "approxCardinality" -> 3, "sum" -> 3),
+        Map("last" -> 2, "list" -> List(0, 1, 2).asJava, "approxCardinality" -> 3, "sum" -> 3),
+        Map("last" -> 2, "list" -> List(0, 1, 2).asJava, "approxCardinality" -> 3, "sum" -> 3),
+        Map("last" -> 5, "list" -> List(3, 4, 5).asJava, "approxCardinality" -> 3, "sum" -> 12),
+        Map("last" -> 5, "list" -> List(3, 4, 5).asJava, "approxCardinality" -> 3, "sum" -> 12),
+        Map("last" -> 5, "list" -> List(3, 4, 5).asJava, "approxCardinality" -> 3, "sum" -> 12),
+        Map("last" -> 8, "list" -> List(0, 1, 2, 6, 7, 8).asJava, "approxCardinality" -> 6, "sum" -> 24),
+        Map("last" -> 8, "list" -> List(0, 1, 2, 6, 7, 8).asJava, "approxCardinality" -> 6, "sum" -> 24),
+        Map("last" -> 8, "list" -> List(0, 1, 2, 6, 7, 8).asJava, "approxCardinality" -> 6, "sum" -> 24)
+      ).asInstanceOf[List[Map[String, AnyRef]]]
+    )
+  }
+
+  test("timeouts") {
+    val key = "key"
+    performTest(
+      List(
+        Left(OneRecord(key, 0, 0)),
+        Right(OneRecord(key, 19, 0)),
+        Right(OneRecord(key, 20, 0)),
+        Right(OneRecord(key, 21, 0))
+      ),
+      List(
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> 0, "list" -> List(0).asJava, "approxCardinality" -> 1, "sum" -> 0),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+      ).asInstanceOf[List[Map[String, AnyRef]]]
+    )
+  }
+
+  test("different keys") {
+    val key1 = "key1"
+    val key2 = "key2"
+    performTest(
+      List(
+        Left(OneRecord(key1, 0, 0)),
+        Right(OneRecord(key2, 1, 1)),
+        Right(OneRecord(key1, 2, 2)),
+        Left(OneRecord(key2, 3, 3))
+      ),
+      List(
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> null, "list" -> List().asJava, "approxCardinality" -> 0, "sum" -> null),
+        Map("last" -> 0, "list" -> List(0).asJava, "approxCardinality" -> 1, "sum" -> 0),
+        Map("last" -> 1, "list" -> List(1).asJava, "approxCardinality" -> 1, "sum" -> 1),
       ).asInstanceOf[List[Map[String, AnyRef]]]
     )
   }
