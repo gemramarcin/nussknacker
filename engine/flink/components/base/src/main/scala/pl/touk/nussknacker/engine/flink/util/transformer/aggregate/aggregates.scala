@@ -263,20 +263,20 @@ object aggregates {
       (aggLeft.result(finalAggregate._1), aggRight.result(finalAggregate._2))
 
     override def computeOutputType(input: typing.TypingResult): Validated[String, typing.TypingResult] = input match {
-      // TODO: Accept only Option
-      case TypedClass(x, leftInput :: rightInput :: Nil) => {
-        val leftOutputType = aggLeft.computeOutputType(leftInput)
-        val rightOutputType = aggRight.computeOutputType(rightInput)
-        leftOutputType.product(rightOutputType).map{case (x, y) =>
-          Typed.genericTypeClass[(_, _)](List(x, y))
+      case TypedClass(input_type, leftInput :: rightInput :: Nil) =>
+        if (input_type == classOf[Either[_, _]]) {
+          val leftOutputType = aggLeft.computeOutputType(leftInput)
+          val rightOutputType = aggRight.computeOutputType(rightInput)
+          leftOutputType.product(rightOutputType).map{case (x, y) =>
+            Typed.genericTypeClass[(_, _)](List(x, y))
+          }
+        } else {
+          Invalid(s"input type must be Either")
         }
-      }
-      case TypedClass(_, y) => {
+      case TypedClass(_, y) =>
         Invalid(s"parameter list $y does not have 2 elements")
-      }
-      case _ => {
+      case _ =>
         Invalid(s"input has invalid type")
-      }
     }
 
     override def computeStoredType(input: typing.TypingResult): Validated[String, typing.TypingResult] =
