@@ -76,31 +76,29 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
 
     val aggregator = new EitherAggregator(aggregatorBase, aggregatorBase)
 
-    new FlinkCustomJoinTransformation with Serializable {
-      override def transform(inputs: Map[String, DataStream[Context]], context: FlinkCustomNodeContext): DataStream[ValueWithContext[AnyRef]] = {
-        val keyedMainBranchStream = inputs(mainId(branchTypeByBranchId).get)
-          .flatMap(new StringKeyedValueMapper(context, keyByBranchId(mainId(branchTypeByBranchId).get), aggregateBy))
-          .map(_.map(_.mapValue(x => Left(x).asInstanceOf[AnyRef])))
+    (inputs: Map[String, DataStream[Context]], context: FlinkCustomNodeContext) => {
+      val keyedMainBranchStream = inputs(mainId(branchTypeByBranchId).get)
+        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(mainId(branchTypeByBranchId).get), aggregateBy))
+        .map(_.map(_.mapValue(x => Left(x).asInstanceOf[AnyRef])))
 
-        val keyedJoinedStream = inputs(joinedId(branchTypeByBranchId).get)
-          .flatMap(new StringKeyedValueMapper(context, keyByBranchId(joinedId(branchTypeByBranchId).get), aggregateBy))
-          .map(_.map(_.mapValue(x => Right(x).asInstanceOf[AnyRef])))
+      val keyedJoinedStream = inputs(joinedId(branchTypeByBranchId).get)
+        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(joinedId(branchTypeByBranchId).get), aggregateBy))
+        .map(_.map(_.mapValue(x => Right(x).asInstanceOf[AnyRef])))
 
-        val sideType = aggregateBy.returnType
-        val inputType = Typed.genericTypeClass[Either[_, _]](List(sideType, sideType))
+      val sideType = aggregateBy.returnType
+      val inputType = Typed.genericTypeClass[Either[_, _]](List(sideType, sideType))
 
-        val storedTypeInfo = context.typeInformationDetection.forType(aggregator.computeStoredTypeUnsafe(inputType))
-        val aggregatorFunction = prepareAggregatorFunction(aggregator, FiniteDuration(window.toMillis, TimeUnit.MILLISECONDS), inputType, storedTypeInfo, context.convertToEngineRuntimeContext)(NodeId(context.nodeId))
-        val statefulStreamWithUid = keyedMainBranchStream
-          .connect(keyedJoinedStream)
-          .keyBy(v => v.value.key, v => v.value.key)
-          .process(aggregatorFunction)
-          .setUidWithName(context, ExplicitUidInOperatorsSupport.defaultExplicitUidInStatefulOperators)
+      val storedTypeInfo = context.typeInformationDetection.forType(aggregator.computeStoredTypeUnsafe(inputType))
+      val aggregatorFunction = prepareAggregatorFunction(aggregator, FiniteDuration(window.toMillis, TimeUnit.MILLISECONDS), inputType, storedTypeInfo, context.convertToEngineRuntimeContext)(NodeId(context.nodeId))
+      val statefulStreamWithUid = keyedMainBranchStream
+        .connect(keyedJoinedStream)
+        .keyBy(v => v.value.key, v => v.value.key)
+        .process(aggregatorFunction)
+        .setUidWithName(context, ExplicitUidInOperatorsSupport.defaultExplicitUidInStatefulOperators)
 
-        timestampAssigner
-          .map(new TimestampAssignmentHelper(_).assignWatermarks(statefulStreamWithUid))
-          .getOrElse(statefulStreamWithUid)
-      }
+      timestampAssigner
+        .map(new TimestampAssignmentHelper(_).assignWatermarks(statefulStreamWithUid))
+        .getOrElse(statefulStreamWithUid)
     }
   }
 
