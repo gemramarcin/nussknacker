@@ -1,0 +1,29 @@
+{
+  "type": "record",
+  "name": "AvroSchemaSubclassDeterminerTestFixedSchema",
+  "fields": [
+    {
+      "name": "md5",
+      "type": {
+        "name": "FixedMd5",
+        "type": "fixed",
+        "size": 16
+      }
+    },
+    {
+      "name": "maybeMd5",
+      "type": [
+        "null",
+        "FixedMd5"
+      ]
+    },
+    {
+      "name": "optionalMd5",
+      "default": null,
+      "type": [
+        "null",
+        "FixedMd5"
+      ]
+    }
+  ]
+}

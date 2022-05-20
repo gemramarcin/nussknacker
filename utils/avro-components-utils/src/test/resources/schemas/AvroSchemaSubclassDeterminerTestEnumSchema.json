@@ -1,0 +1,35 @@
+{
+  "type": "record",
+  "name": "AvroSchemaSubclassDeterminerTestEnumSchema",
+  "fields": [
+    {
+
+      "name": "suit",
+      "type": {
+        "name": "Suit",
+        "type": "enum",
+        "symbols" : ["SPADES", "HEARTS", "DIAMONDS", "CLUBS"]
+      }
+    },
+    {
+      "name": "maybeSuit",
+      "type": [
+        "null",
+        "Suit"
+      ]
+    },
+    {
+      "name": "optionalSuit",
+      "default": null,
+      "type": [
+        "null",
+        "Suit"
+      ]
+    },
+    {
+      "name": "defaultSuit",
+      "default": "SPADES",
+      "type": "Suit"
+    }
+  ]
+}

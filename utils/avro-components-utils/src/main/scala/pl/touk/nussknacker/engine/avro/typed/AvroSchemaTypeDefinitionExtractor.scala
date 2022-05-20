@@ -103,4 +103,5 @@ object AvroSchemaTypeDefinitionExtractor {
 
   def typeDefinition(schema: Schema): TypingResult =
     withOptionallyFieldsExtractor.typeDefinition(schema, DefaultPossibleTypes)
+
 }

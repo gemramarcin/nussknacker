@@ -1,0 +1,38 @@
+{
+  "type": "record",
+  "name": "AvroSchemaSubclassDeterminerTestPrimitiveSchema",
+  "fields": [
+    {
+      "name": "id",
+      "type": "int"
+    },
+    {
+      "name": "unionId",
+      "type": [
+        "null",
+        "int",
+        "long"
+      ]
+    },
+    {
+      "name": "maybeId",
+      "type": [
+        "null",
+        "int"
+      ]
+    },
+    {
+      "name": "optionalId",
+      "default": null,
+      "type": [
+        "null",
+        "int"
+      ]
+    },
+    {
+      "name": "defaultId",
+      "default": 1,
+      "type": "int"
+    }
+  ]
+}
