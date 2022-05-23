@@ -23,7 +23,6 @@ import pl.touk.nussknacker.engine.flink.util.timestamp.TimestampAssignmentHelper
 import pl.touk.nussknacker.engine.flink.util.transformer.aggregate.{AggregateHelper, Aggregator}
 import pl.touk.nussknacker.engine.api.NodeId
 import pl.touk.nussknacker.engine.flink.util.transformer.aggregate.aggregates.EitherAggregator
-import pl.touk.nussknacker.engine.util.Implicits.RichScalaMap
 
 import java.time.Duration
 import java.util.concurrent.TimeUnit
@@ -44,18 +43,7 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
 
   override def contextTransformation(contexts: Map[String, ValidationContext], dependencies: List[NodeDependencyValue])(implicit nodeId: NodeId): NodeTransformationDefinition = {
     case TransformationStep(Nil, _) => NextParameters(
-      List(BranchTypeParam, KeyParam, AggregatorParam, WindowLengthParam).map(_.parameter))
-    case TransformationStep(
-    (`BranchTypeParamName`, DefinedEagerBranchParameter(branchTypeByBranchId: Map[String, BranchType]@unchecked, _)) ::
-      (`KeyParamName`, _) :: (`AggregatorParamName`, _) :: (`WindowLengthParamName`, _) :: Nil, _) =>
-      val error = if (branchTypeByBranchId.values.toList.sorted != BranchType.values().toList)
-        List(CustomNodeError(s"Has to be exactly one MAIN and JOINED branch, got: ${branchTypeByBranchId.values.mkString(", ")}", Some(BranchTypeParamName)))
-      else
-        Nil
-      val joinedVariables = joinedId(branchTypeByBranchId).map(contexts).getOrElse(ValidationContext())
-        .localVariables.mapValuesNow(AdditionalVariableProvidedInRuntime(_))
-      val res = NextParameters(List(AggregateByParam.parameter), error)
-      res
+      List(BranchTypeParam, KeyParam, AggregatorParam, AggregateByParam, WindowLengthParam).map(_.parameter))
 
     case TransformationStep(
     (`BranchTypeParamName`, DefinedEagerBranchParameter(branchTypeByBranchId: Map[String, BranchType]@unchecked, _)) ::
@@ -71,7 +59,7 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
   override def implementation(params: Map[String, Any], dependencies: List[NodeDependencyValue], finalState: Option[State]): FlinkCustomJoinTransformation = {
     val branchTypeByBranchId: Map[String, BranchType] = BranchTypeParam.extractValue(params)
     val keyByBranchId: Map[String, LazyParameter[CharSequence]] = KeyParam.extractValue(params)
-    val aggregatorBase: Aggregator = AggregatorParam.extractValue(params)
+    val aggregatorBase: Aggregator = AggregatorParam.extractValue(params).head._2
     val window: Duration = WindowLengthParam.extractValue(params)
     val aggregateBy: Map[String, LazyParameter[AnyRef]] = params(AggregateByParamName).asInstanceOf[Map[String, LazyParameter[AnyRef]]]
 
@@ -130,14 +118,14 @@ case object FullOuterJoinTransformer extends FullOuterJoinTransformer(None) {
   val KeyParam: ParameterWithExtractor[Map[String, LazyParameter[CharSequence]]] = ParameterWithExtractor.branchLazyMandatory[CharSequence](KeyParamName)
 
   val AggregatorParamName = "aggregator"
-  val AggregatorParam: ParameterWithExtractor[Aggregator] = ParameterWithExtractor
-    .mandatory[Aggregator](AggregatorParamName, _.copy(editor = Some(AggregateHelper.DUAL_EDITOR),
+  val AggregatorParam: ParameterWithExtractor[Map[String, Aggregator]] = ParameterWithExtractor
+    .branchMandatory[Aggregator](AggregatorParamName, _.copy(editor = Some(AggregateHelper.DUAL_EDITOR),
       additionalVariables = Map("AGG" -> AdditionalVariableWithFixedValue(new AggregateHelper))))
-
-  val WindowLengthParamName = "windowLength"
-  val WindowLengthParam: ParameterWithExtractor[Duration] = ParameterWithExtractor.mandatory[Duration](WindowLengthParamName)
 
   val AggregateByParamName = "aggregateBy"
   val AggregateByParam: ParameterWithExtractor[Map[String, LazyParameter[AnyRef]]] = ParameterWithExtractor.branchLazyMandatory[AnyRef](AggregateByParamName)
+
+  val WindowLengthParamName = "windowLength"
+  val WindowLengthParam: ParameterWithExtractor[Duration] = ParameterWithExtractor.mandatory[Duration](WindowLengthParamName)
 
 }
