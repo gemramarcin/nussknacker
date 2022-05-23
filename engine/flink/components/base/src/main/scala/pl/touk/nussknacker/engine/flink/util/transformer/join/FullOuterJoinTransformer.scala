@@ -54,7 +54,7 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
         Nil
       val joinedVariables = joinedId(branchTypeByBranchId).map(contexts).getOrElse(ValidationContext())
         .localVariables.mapValuesNow(AdditionalVariableProvidedInRuntime(_))
-      NextParameters(List(Parameter[Any](AggregateByParamName).copy(additionalVariables = joinedVariables, isLazyParameter = true)), error)
+      NextParameters(List(AggregateByParam.parameter.copy(additionalVariables = joinedVariables)), error)
 
     case TransformationStep(
     (`BranchTypeParamName`, DefinedEagerBranchParameter(branchTypeByBranchId: Map[String, BranchType]@unchecked, _)) ::
@@ -136,5 +136,6 @@ case object FullOuterJoinTransformer extends FullOuterJoinTransformer(None) {
   val WindowLengthParam: ParameterWithExtractor[Duration] = ParameterWithExtractor.mandatory[Duration](WindowLengthParamName)
 
   val AggregateByParamName = "aggregateBy"
+  val AggregateByParam: ParameterWithExtractor[LazyParameter[AnyRef]] = ParameterWithExtractor.lazyMandatory[AnyRef](AggregateByParamName)
 
 }
