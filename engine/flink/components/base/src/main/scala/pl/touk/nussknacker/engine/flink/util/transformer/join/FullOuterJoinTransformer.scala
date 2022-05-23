@@ -43,45 +43,51 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
 
   override def contextTransformation(contexts: Map[String, ValidationContext], dependencies: List[NodeDependencyValue])(implicit nodeId: NodeId): NodeTransformationDefinition = {
     case TransformationStep(Nil, _) => NextParameters(
-      List(BranchTypeParam, KeyParam, AggregatorParam, AggregateByParam, WindowLengthParam).map(_.parameter))
+      List(KeyParam, AggregatorParam, AggregateByParam, WindowLengthParam).map(_.parameter))
 
     case TransformationStep(
-    (`BranchTypeParamName`, DefinedEagerBranchParameter(branchTypeByBranchId: Map[String, BranchType]@unchecked, _)) ::
-      (`KeyParamName`, _) :: (`AggregatorParamName`, DefinedEagerParameter(aggregator: Aggregator, _)) :: (`WindowLengthParamName`, _) ::
-      (`AggregateByParamName`, aggregateBy) :: Nil, _) =>
+    (`KeyParamName`, DefinedLazyBranchParameter(_: Map[String, LazyParameter[CharSequence]]@unchecked)) ::
+      (`AggregatorParamName`, DefinedEagerBranchParameter(aggregatorByBranchId: Map[String, Aggregator]@unchecked, _)) ::
+      (`AggregateByParamName`, DefinedLazyBranchParameter(aggregateByByBranchId: Map[String, Any]@unchecked)) ::
+      (`WindowLengthParamName`, _) ::
+      Nil, _) =>
       val outName = OutputVariableNameDependency.extract(dependencies)
-      val mainCtx = mainId(branchTypeByBranchId).map(contexts).getOrElse(ValidationContext())
-      val validAggregateOutputType = aggregator.computeOutputType(aggregateBy.returnType).leftMap(CustomNodeError(_, Some(AggregatorParamName)))
-      FinalResults.forValidation(mainCtx, validAggregateOutputType.swap.toList)(
-        _.withVariable(OutputVar.customNode(outName), validAggregateOutputType.getOrElse(Unknown)))
+      val mainCtx = ValidationContext()
+      val validAggregateOutputType = aggregatorByBranchId
+        .map{case (id, agg) => agg.computeOutputType(aggregateByByBranchId(id).returnType)}
+        .map(_.leftMap(CustomNodeError(_, Some(AggregatorParamName))))
+
+      FinalResults.forValidation(mainCtx, validAggregateOutputType.toList.flatMap(_.swap.toList))(
+        _.withVariable(OutputVar.customNode(outName), Unknown))
   }
 
   override def implementation(params: Map[String, Any], dependencies: List[NodeDependencyValue], finalState: Option[State]): FlinkCustomJoinTransformation = {
-    val branchTypeByBranchId: Map[String, BranchType] = BranchTypeParam.extractValue(params)
     val keyByBranchId: Map[String, LazyParameter[CharSequence]] = KeyParam.extractValue(params)
-    val aggregatorBase: Aggregator = AggregatorParam.extractValue(params).head._2
+    val aggregatorByBranchId: Map[String, Aggregator] = AggregatorParam.extractValue(params)
+    val aggregateByByBranchId: Map[String, LazyParameter[AnyRef]] = AggregateByParam.extractValue(params)
     val window: Duration = WindowLengthParam.extractValue(params)
-    val aggregateBy: Map[String, LazyParameter[AnyRef]] = params(AggregateByParamName).asInstanceOf[Map[String, LazyParameter[AnyRef]]]
 
-    val aggregator = new EitherAggregator(aggregatorBase, aggregatorBase)
+    val idLeft :: idRight :: _ = keyByBranchId.toList.map(_._1)
+
+    val aggregator = new EitherAggregator(aggregatorByBranchId(idLeft), aggregatorByBranchId(idRight))
 
     (inputs: Map[String, DataStream[Context]], context: FlinkCustomNodeContext) => {
-      val keyedMainBranchStream = inputs(mainId(branchTypeByBranchId).get)
-        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(mainId(branchTypeByBranchId).get), aggregateBy(mainId(branchTypeByBranchId).get)))
+      val keyedLeftStream = inputs(idLeft)
+        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(idLeft), aggregateByByBranchId(idLeft)))
         .map(_.map(_.mapValue(x => Left(x).asInstanceOf[AnyRef])))
 
-      val keyedJoinedStream = inputs(joinedId(branchTypeByBranchId).get)
-        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(joinedId(branchTypeByBranchId).get), aggregateBy(joinedId(branchTypeByBranchId).get)))
+      val keyedRightStream = inputs(idRight)
+        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(idRight), aggregateByByBranchId(idRight)))
         .map(_.map(_.mapValue(x => Right(x).asInstanceOf[AnyRef])))
 
-      val mainType = aggregateBy(mainId(branchTypeByBranchId).get).returnType
-      val sideType = aggregateBy(joinedId(branchTypeByBranchId).get).returnType
+      val mainType = aggregateByByBranchId(idLeft).returnType
+      val sideType = aggregateByByBranchId(idRight).returnType
       val inputType = Typed.genericTypeClass[Either[_, _]](List(mainType, sideType))
 
       val storedTypeInfo = context.typeInformationDetection.forType(aggregator.computeStoredTypeUnsafe(inputType))
       val aggregatorFunction = prepareAggregatorFunction(aggregator, FiniteDuration(window.toMillis, TimeUnit.MILLISECONDS), inputType, storedTypeInfo, context.convertToEngineRuntimeContext)(NodeId(context.nodeId))
-      val statefulStreamWithUid = keyedMainBranchStream
-        .connect(keyedJoinedStream)
+      val statefulStreamWithUid = keyedLeftStream
+        .connect(keyedRightStream)
         .keyBy(v => v.value.key, v => v.value.key)
         .process(aggregatorFunction)
         .setUidWithName(context, ExplicitUidInOperatorsSupport.defaultExplicitUidInStatefulOperators)
@@ -90,14 +96,6 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
         .map(new TimestampAssignmentHelper(_).assignWatermarks(statefulStreamWithUid))
         .getOrElse(statefulStreamWithUid)
     }
-  }
-
-  private def mainId(branchTypeByBranchId: Map[String, BranchType]) = {
-    branchTypeByBranchId.find(_._2 == BranchType.MAIN).map(_._1)
-  }
-
-  private def joinedId(branchTypeByBranchId: Map[String, BranchType]) = {
-    branchTypeByBranchId.find(_._2 == BranchType.JOINED).map(_._1)
   }
 
   protected def prepareAggregatorFunction(aggregator: Aggregator, stateTimeout: FiniteDuration, aggregateElementType: TypingResult,
@@ -110,9 +108,6 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
 }
 
 case object FullOuterJoinTransformer extends FullOuterJoinTransformer(None) {
-
-  val BranchTypeParamName = "branchType"
-  val BranchTypeParam: ParameterWithExtractor[Map[String, BranchType]] = ParameterWithExtractor.branchMandatory[BranchType](BranchTypeParamName)
 
   val KeyParamName = "key"
   val KeyParam: ParameterWithExtractor[Map[String, LazyParameter[CharSequence]]] = ParameterWithExtractor.branchLazyMandatory[CharSequence](KeyParamName)
