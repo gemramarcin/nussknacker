@@ -65,16 +65,17 @@ class FullOuterJoinTransformerSpec extends FunSuite with FlinkSpec with Matchers
           List(
             MainBranchId -> List(
               "branchType" -> s"T(${classOf[BranchType].getName}).MAIN",
-              "key" -> s"#$KeyVariableName"
+              "key" -> s"#$KeyVariableName",
+              "aggregateBy" -> "{last: #input.value, list: #input.value, approxCardinality: #input.value, sum: #input.value } "
             ),
             JoinedBranchId -> List(
               "branchType" -> s"T(${classOf[BranchType].getName}).JOINED",
-              "key" -> "#input.key"
+              "key" -> "#input.key",
+              "aggregateBy" -> "{last: #input.value, list: #input.value, approxCardinality: #input.value, sum: #input.value } "
             )
           ),
           "aggregator" -> s"#AGG.map({last: #AGG.last, list: #AGG.list, approxCardinality: #AGG.approxCardinality, sum: #AGG.sum})",
           "windowLength" -> s"T(${classOf[Duration].getName}).parse('PT20H')",
-          "aggregateBy" -> "{last: #input.value, list: #input.value, approxCardinality: #input.value, sum: #input.value } "
         )
         .emptySink(EndNodeId, "end")
     ))

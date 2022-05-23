@@ -54,12 +54,13 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
         Nil
       val joinedVariables = joinedId(branchTypeByBranchId).map(contexts).getOrElse(ValidationContext())
         .localVariables.mapValuesNow(AdditionalVariableProvidedInRuntime(_))
-      NextParameters(List(AggregateByParam.parameter.copy(additionalVariables = joinedVariables)), error)
+      val res = NextParameters(List(AggregateByParam.parameter), error)
+      res
 
     case TransformationStep(
     (`BranchTypeParamName`, DefinedEagerBranchParameter(branchTypeByBranchId: Map[String, BranchType]@unchecked, _)) ::
       (`KeyParamName`, _) :: (`AggregatorParamName`, DefinedEagerParameter(aggregator: Aggregator, _)) :: (`WindowLengthParamName`, _) ::
-      (`AggregateByParamName`, aggregateBy: DefinedSingleParameter) :: Nil, _) =>
+      (`AggregateByParamName`, aggregateBy) :: Nil, _) =>
       val outName = OutputVariableNameDependency.extract(dependencies)
       val mainCtx = mainId(branchTypeByBranchId).map(contexts).getOrElse(ValidationContext())
       val validAggregateOutputType = aggregator.computeOutputType(aggregateBy.returnType).leftMap(CustomNodeError(_, Some(AggregatorParamName)))
@@ -72,21 +73,22 @@ class FullOuterJoinTransformer(timestampAssigner: Option[TimestampWatermarkHandl
     val keyByBranchId: Map[String, LazyParameter[CharSequence]] = KeyParam.extractValue(params)
     val aggregatorBase: Aggregator = AggregatorParam.extractValue(params)
     val window: Duration = WindowLengthParam.extractValue(params)
-    val aggregateBy: LazyParameter[AnyRef] = params(AggregateByParamName).asInstanceOf[LazyParameter[AnyRef]]
+    val aggregateBy: Map[String, LazyParameter[AnyRef]] = params(AggregateByParamName).asInstanceOf[Map[String, LazyParameter[AnyRef]]]
 
     val aggregator = new EitherAggregator(aggregatorBase, aggregatorBase)
 
     (inputs: Map[String, DataStream[Context]], context: FlinkCustomNodeContext) => {
       val keyedMainBranchStream = inputs(mainId(branchTypeByBranchId).get)
-        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(mainId(branchTypeByBranchId).get), aggregateBy))
+        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(mainId(branchTypeByBranchId).get), aggregateBy(mainId(branchTypeByBranchId).get)))
         .map(_.map(_.mapValue(x => Left(x).asInstanceOf[AnyRef])))
 
       val keyedJoinedStream = inputs(joinedId(branchTypeByBranchId).get)
-        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(joinedId(branchTypeByBranchId).get), aggregateBy))
+        .flatMap(new StringKeyedValueMapper(context, keyByBranchId(joinedId(branchTypeByBranchId).get), aggregateBy(joinedId(branchTypeByBranchId).get)))
         .map(_.map(_.mapValue(x => Right(x).asInstanceOf[AnyRef])))
 
-      val sideType = aggregateBy.returnType
-      val inputType = Typed.genericTypeClass[Either[_, _]](List(sideType, sideType))
+      val mainType = aggregateBy(mainId(branchTypeByBranchId).get).returnType
+      val sideType = aggregateBy(joinedId(branchTypeByBranchId).get).returnType
+      val inputType = Typed.genericTypeClass[Either[_, _]](List(mainType, sideType))
 
       val storedTypeInfo = context.typeInformationDetection.forType(aggregator.computeStoredTypeUnsafe(inputType))
       val aggregatorFunction = prepareAggregatorFunction(aggregator, FiniteDuration(window.toMillis, TimeUnit.MILLISECONDS), inputType, storedTypeInfo, context.convertToEngineRuntimeContext)(NodeId(context.nodeId))
@@ -136,6 +138,6 @@ case object FullOuterJoinTransformer extends FullOuterJoinTransformer(None) {
   val WindowLengthParam: ParameterWithExtractor[Duration] = ParameterWithExtractor.mandatory[Duration](WindowLengthParamName)
 
   val AggregateByParamName = "aggregateBy"
-  val AggregateByParam: ParameterWithExtractor[LazyParameter[AnyRef]] = ParameterWithExtractor.lazyMandatory[AnyRef](AggregateByParamName)
+  val AggregateByParam: ParameterWithExtractor[Map[String, LazyParameter[AnyRef]]] = ParameterWithExtractor.branchLazyMandatory[AnyRef](AggregateByParamName)
 
 }
